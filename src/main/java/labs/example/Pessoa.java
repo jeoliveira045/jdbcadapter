@@ -15,5 +15,6 @@ public class Pessoa {
 
     private String endereco;
 
-    private LocalDate dataNascimento;
+//    private LocalDate dataNascimento;
+
 }
