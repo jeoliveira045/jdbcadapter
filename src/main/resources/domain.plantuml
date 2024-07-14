@@ -1,0 +1,32 @@
+@startuml
+    class DatabaseConnection{
+        - username: String
+        - password: String
+        - url: String
+        ---
+        + getConnection(): Connection
+    }
+
+    class Client{
+
+    }
+
+    class Table{
+        - properties: List<String>
+        - constraints: List<String>
+        --
+
+    }
+
+
+
+
+
+    Client --> DatabaseConnection
+    Client -r-> Table
+
+
+
+
+
+@enduml
