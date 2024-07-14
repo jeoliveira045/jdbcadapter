@@ -7,7 +7,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 @AllArgsConstructor
-public class DataAccess<T> {
+public class EntityAccess<T> {
 
     private Class<T> classType;
 

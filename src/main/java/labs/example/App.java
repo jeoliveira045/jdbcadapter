@@ -1,7 +1,5 @@
 package labs.example;
 
-import lombok.AllArgsConstructor;
-
 import java.sql.*;
 
 
@@ -15,8 +13,8 @@ public class App
 
     public static void main( String[] args ) throws SQLException {
         Connection conn = DatabaseConnection.getConnection();
-        DataAccess<Pessoa> dataAccess = new DataAccess<>(Pessoa.class);
-        dataAccess.createTable(conn);
+        EntityAccess<Pessoa> entityAccess = new EntityAccess<>(Pessoa.class);
+        entityAccess.createTable(conn);
     }
 
 
