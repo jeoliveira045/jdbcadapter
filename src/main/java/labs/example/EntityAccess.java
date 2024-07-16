@@ -26,7 +26,12 @@ public class EntityAccess<T> {
                 var fieldName = Pessoa.class.getDeclaredFields()[i].getName().toUpperCase();
                 var fieldType = getSQLType(classType.getDeclaredFields()[i].getType().getSimpleName());
                 var commaOrBreakLine = setCommaOrBreakLine(i, classType.getDeclaredFields().length);
-                query.append(fieldName).append(" ").append(fieldType).append(commaOrBreakLine);
+                if(fieldName.equalsIgnoreCase("ID")){
+                    query.append(fieldName).append(" ").append(fieldType).append(" PRIMARY KEY ").append(commaOrBreakLine);
+                }else {
+                    query.append(fieldName).append(" ").append(fieldType).append(commaOrBreakLine);
+                }
+
             }
             query.append(");");
 
@@ -40,7 +45,7 @@ public class EntityAccess<T> {
 
     public void alterTable(Connection conn) throws SQLException {
         DatabaseMetaData databaseMetaData = conn.getMetaData();
-        readingMetadataTable(databaseMetaData, classType, conn);
+        readingMetadataTable(databaseMetaData, conn);
     }
 
     public void dropTable(Connection connection) throws SQLException {
@@ -49,7 +54,7 @@ public class EntityAccess<T> {
         statement.execute(String.format("DROP TABLE IF EXISTS %s", classType.getSimpleName().toUpperCase()));
     }
 
-    public void insertData(T entityData, Connection conn) throws SQLException{
+    public void insertData(T entityData, Connection conn) throws SQLException, NoSuchFieldException, IllegalAccessException{
         StringBuilder insertStatement = new StringBuilder();
 
         insertStatement.append("INSERT INTO " + entityData.getClass().getSimpleName().toUpperCase() + "(");
@@ -74,7 +79,38 @@ public class EntityAccess<T> {
             }
         };
         statement.executeUpdate();
+    }
 
+    public void updateData(T entityData, Connection conn) throws SQLException{
+        StringBuilder updateStatement = new StringBuilder();
+
+        updateStatement.append("UPDATE " + classType.getSimpleName().toUpperCase() + " SET ");
+        for(int i = 0; i < classType.getDeclaredFields().length; i++){
+            updateStatement.append(classType.getDeclaredFields()[i].getName().toUpperCase() + " = ?" + setCommaOrBreakLine(i, classType.getDeclaredFields().length));
+        }
+        updateStatement.append("WHERE ID = ?");
+        System.out.println(updateStatement.toString());
+        PreparedStatement statement = conn.prepareStatement(updateStatement.toString());
+        for(int i = 1; i <= entityData.getClass().getDeclaredFields().length+1;i++) {
+            try {
+                if(i <= entityData.getClass().getDeclaredFields().length){
+                    var fieldName = entityData.getClass().getDeclaredFields()[i-1].getName();
+                    Field valor = entityData.getClass().getDeclaredField(fieldName);
+                    valor.setAccessible(true);
+                    statement.setObject(i, valor.get(entityData));
+                } else {
+                    var fieldName = entityData.getClass().getDeclaredFields()[i-(entityData.getClass().getDeclaredFields().length+1)].getName();
+                    Field valor = entityData.getClass().getDeclaredField(fieldName);
+                    valor.setAccessible(true);
+                    statement.setObject(i, valor.get(entityData));
+                }
+            } catch (IllegalAccessException e) {
+                throw new RuntimeException(e);
+            } catch (NoSuchFieldException e) {
+                throw new RuntimeException(e);
+            }
+        };
+        statement.executeUpdate();
     }
 
 
@@ -144,7 +180,7 @@ public class EntityAccess<T> {
         }
     }
 
-    private void readingMetadataTable(DatabaseMetaData databaseMetaData, Class<T> classType, Connection conn) throws SQLException {
+    private void readingMetadataTable(DatabaseMetaData databaseMetaData, Connection conn) throws SQLException {
         ResultSet rsTables = databaseMetaData.getTables(null,null, null, new String[]{"TABLE"});
 
         while (rsTables.next()) {
@@ -167,9 +203,4 @@ public class EntityAccess<T> {
         }
         rsTables.close();
     }
-
-
-
-
-
 }
