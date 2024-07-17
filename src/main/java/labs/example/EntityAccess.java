@@ -20,6 +20,15 @@ public class EntityAccess<T> {
 
             StringBuilder query = new StringBuilder();
 
+            String sequenceName = (classType.getSimpleName().toUpperCase() + "_ID_SEQUENCE");
+
+            DatabaseMetaData databaseMetaData  = connection.getMetaData();
+            ResultSet resultSet = databaseMetaData.getTables(null, null, sequenceName, new String[] {"SEQUENCE"});
+
+            if(!resultSet.next()){
+                createSequence(connection);
+            }
+
             query.append("CREATE TABLE ").append(classType.getSimpleName().toUpperCase()).append(" (\n");
 
             for(int i = 0; i < classType.getDeclaredFields().length; i++){
@@ -27,7 +36,7 @@ public class EntityAccess<T> {
                 var fieldType = getSQLType(classType.getDeclaredFields()[i].getType().getSimpleName());
                 var commaOrBreakLine = setCommaOrBreakLine(i, classType.getDeclaredFields().length);
                 if(fieldName.equalsIgnoreCase("ID")){
-                    query.append(fieldName).append(" ").append(fieldType).append(" PRIMARY KEY ").append(commaOrBreakLine);
+                    query.append(fieldName).append(" ").append(fieldType).append(" PRIMARY KEY DEFAULT nextval('").append(classType.getSimpleName().toUpperCase() + "_ID_SEQUENCE')").append(commaOrBreakLine);
                 }else {
                     query.append(fieldName).append(" ").append(fieldType).append(commaOrBreakLine);
                 }
@@ -36,11 +45,22 @@ public class EntityAccess<T> {
             query.append(");");
 
             statement.execute(query.toString());
-        } catch (SQLException e){
+        } catch (SQLException e) {
             if(e.getMessage().contains("relation \"" + classType.getSimpleName().toLowerCase() + "\" already exists")){
                 alterTable(connection);
             }
+//            e.printStackTrace();
         }
+    }
+
+    private void createSequence(Connection conn) throws SQLException{
+        StringBuilder stringBuilder = new StringBuilder();
+        stringBuilder.append("CREATE SEQUENCE " + classType.getSimpleName().toUpperCase() + "_ID_SEQUENCE START WITH 1 INCREMENT BY 1 NO MINVALUE NO MAXVALUE CACHE 1");
+
+        conn.prepareStatement(stringBuilder.toString()).execute();
+
+
+
     }
 
     public void alterTable(Connection conn) throws SQLException {
@@ -54,34 +74,51 @@ public class EntityAccess<T> {
         statement.execute(String.format("DROP TABLE IF EXISTS %s", classType.getSimpleName().toUpperCase()));
     }
 
-    public void insertData(T entityData, Connection conn) throws SQLException, NoSuchFieldException, IllegalAccessException{
+    public void saveData(T entityData, Connection conn) throws NoSuchFieldException, IllegalAccessException, SQLException {
+        StringBuilder queryStatement = new StringBuilder();
+        Field idField = entityData.getClass().getDeclaredField("id");
+        idField.setAccessible(true);
+        if(idField.get(entityData) != null){
+            queryStatement.append("SELECT * FROM " + entityData.getClass().getSimpleName().toUpperCase() + " WHERE ID = ?");
+            var stmt = conn.prepareStatement(queryStatement.toString());
+            stmt.setObject(1, idField.get(entityData));
+            stmt.execute();
+
+            ResultSet queryList = stmt.getResultSet();
+            if(queryList.next()){
+                updateData(entityData, conn);
+            }else {
+                idField.set(entityData, null);
+                insertData(entityData, conn);
+            }
+
+        }else {
+            insertData(entityData, conn);
+        }
+    }
+
+    private void insertData(T entityData, Connection conn) throws SQLException, NoSuchFieldException, IllegalAccessException{
         StringBuilder insertStatement = new StringBuilder();
 
         insertStatement.append("INSERT INTO " + entityData.getClass().getSimpleName().toUpperCase() + "(");
-        for(int i = 0; i < entityData.getClass().getDeclaredFields().length; i++){
+        for(int i = 1; i < entityData.getClass().getDeclaredFields().length; i++){
             insertStatement.append(entityData.getClass().getDeclaredFields()[i].getName().toUpperCase()).append(setCommaOrFinalParentesis(i, entityData.getClass().getDeclaredFields().length));
         }
         insertStatement.append(" VALUES").append("(");
-        for(int i = 0; i < entityData.getClass().getDeclaredFields().length; i++) {
+        for(int i = 1; i < entityData.getClass().getDeclaredFields().length; i++) {
             insertStatement.append("?").append(setCommaOrFinalParentesis(i, entityData.getClass().getDeclaredFields().length));
         }
         PreparedStatement statement = conn.prepareStatement(insertStatement.toString());
-        for(int i = 1; i <= entityData.getClass().getDeclaredFields().length;i++) {
-            try {
-                var fieldName = entityData.getClass().getDeclaredFields()[i-1].getName();
+        for(int i = 1; i < entityData.getClass().getDeclaredFields().length;i++) {
+                var fieldName = entityData.getClass().getDeclaredFields()[i].getName();
                 Field valor = entityData.getClass().getDeclaredField(fieldName);
                 valor.setAccessible(true);
                 statement.setObject(i, valor.get(entityData));
-            } catch (IllegalAccessException e) {
-                throw new RuntimeException(e);
-            } catch (NoSuchFieldException e) {
-                throw new RuntimeException(e);
-            }
         };
         statement.executeUpdate();
     }
 
-    public void updateData(T entityData, Connection conn) throws SQLException{
+    private void updateData(T entityData, Connection conn) throws SQLException{
         StringBuilder updateStatement = new StringBuilder();
 
         updateStatement.append("UPDATE " + classType.getSimpleName().toUpperCase() + " SET ");
@@ -89,7 +126,6 @@ public class EntityAccess<T> {
             updateStatement.append(classType.getDeclaredFields()[i].getName().toUpperCase() + " = ?" + setCommaOrBreakLine(i, classType.getDeclaredFields().length));
         }
         updateStatement.append("WHERE ID = ?");
-        System.out.println(updateStatement.toString());
         PreparedStatement statement = conn.prepareStatement(updateStatement.toString());
         for(int i = 1; i <= entityData.getClass().getDeclaredFields().length+1;i++) {
             try {
