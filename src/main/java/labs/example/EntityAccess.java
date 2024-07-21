@@ -4,77 +4,79 @@ import lombok.AllArgsConstructor;
 
 import java.lang.reflect.Field;
 import java.sql.*;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Objects;
+import java.util.*;
 
 @AllArgsConstructor
 public class EntityAccess<T> {
 
     private Class<T> classType;
+    
+    private Connection conn;
 
-    public  void createTable(Connection connection) throws SQLException {
-        Statement statement = connection.createStatement();
+    private static final List<Class<?>> primitiveClassType = Arrays.asList(int.class, long.class, boolean.class,byte.class, short.class, boolean.class, float.class, char.class);
+
+    public  void createTable() throws SQLException {
+        Statement statement = conn.createStatement();
         try{
 
             StringBuilder query = new StringBuilder();
 
             String sequenceName = (classType.getSimpleName().toUpperCase() + "_ID_SEQUENCE");
 
-            DatabaseMetaData databaseMetaData  = connection.getMetaData();
+            DatabaseMetaData databaseMetaData  = conn.getMetaData();
             ResultSet resultSet = databaseMetaData.getTables(null, null, sequenceName, new String[] {"SEQUENCE"});
 
-            if(!resultSet.next()){
-                createSequence(connection);
+            if(resultSet.next()){
+                createSequence();
             }
 
-            query.append("CREATE TABLE ").append(classType.getSimpleName().toUpperCase()).append(" (\n");
 
+            query.append("CREATE TABLE ").append(classType.getSimpleName().toUpperCase()).append(" (\n");
             for(int i = 0; i < classType.getDeclaredFields().length; i++){
-                var fieldName = Pessoa.class.getDeclaredFields()[i].getName().toUpperCase();
-                var fieldType = getSQLType(classType.getDeclaredFields()[i].getType().getSimpleName());
+                int finalI1 = i;
+                var primitive = Arrays.stream(classType.getDeclaredFields()[finalI1].getType().getDeclaredFields()).anyMatch(classAttributeType -> {
+                    return primitiveClassType.stream().anyMatch(primitiveClassTypeItem -> {
+                        return primitiveClassTypeItem.isAssignableFrom(classAttributeType.getType());
+                    });
+                });
+                var fieldName = classType.getDeclaredFields()[i].getName().toUpperCase();
+                var fieldType = getSQLType(classType.getDeclaredFields()[i].getType().getSimpleName(), !primitive);
                 var commaOrBreakLine = setCommaOrBreakLine(i, classType.getDeclaredFields().length);
                 if(fieldName.equalsIgnoreCase("ID")){
                     query.append(fieldName).append(" ").append(fieldType).append(" PRIMARY KEY DEFAULT nextval('").append(classType.getSimpleName().toUpperCase() + "_ID_SEQUENCE')").append(commaOrBreakLine);
                 }else {
                     query.append(fieldName).append(" ").append(fieldType).append(commaOrBreakLine);
                 }
-
             }
             query.append(");");
 
             statement.execute(query.toString());
         } catch (SQLException e) {
             if(e.getMessage().contains("relation \"" + classType.getSimpleName().toLowerCase() + "\" already exists")){
-                alterTable(connection);
+                alterTable();
             }
-//            e.printStackTrace();
         }
     }
 
-    private void createSequence(Connection conn) throws SQLException{
+    private void createSequence() throws SQLException{
         StringBuilder stringBuilder = new StringBuilder();
         stringBuilder.append("CREATE SEQUENCE " + classType.getSimpleName().toUpperCase() + "_ID_SEQUENCE START WITH 1 INCREMENT BY 1 NO MINVALUE NO MAXVALUE CACHE 1");
 
         conn.prepareStatement(stringBuilder.toString()).execute();
-
-
-
     }
 
-    public void alterTable(Connection conn) throws SQLException {
+    public void alterTable() throws SQLException {
         DatabaseMetaData databaseMetaData = conn.getMetaData();
-        readingMetadataTable(databaseMetaData, conn);
+        readingMetadataTable(databaseMetaData);
     }
 
-    public void dropTable(Connection connection) throws SQLException {
-        Statement statement = connection.createStatement();
+    public void dropTable() throws SQLException {
+        Statement statement = conn.createStatement();
 
         statement.execute(String.format("DROP TABLE IF EXISTS %s", classType.getSimpleName().toUpperCase()));
     }
 
-    public void saveData(T entityData, Connection conn) throws NoSuchFieldException, IllegalAccessException, SQLException {
+    public void saveData(T entityData) throws NoSuchFieldException, IllegalAccessException, SQLException {
         StringBuilder queryStatement = new StringBuilder();
         Field idField = entityData.getClass().getDeclaredField("id");
         idField.setAccessible(true);
@@ -86,18 +88,18 @@ public class EntityAccess<T> {
 
             ResultSet queryList = stmt.getResultSet();
             if(queryList.next()){
-                updateData(entityData, conn);
+                updateData(entityData);
             }else {
                 idField.set(entityData, null);
-                insertData(entityData, conn);
+                insertData(entityData);
             }
 
         }else {
-            insertData(entityData, conn);
+            insertData(entityData);
         }
     }
 
-    private void insertData(T entityData, Connection conn) throws SQLException, NoSuchFieldException, IllegalAccessException{
+    private void insertData(T entityData) throws SQLException, NoSuchFieldException, IllegalAccessException{
         StringBuilder insertStatement = new StringBuilder();
 
         insertStatement.append("INSERT INTO " + entityData.getClass().getSimpleName().toUpperCase() + "(");
@@ -118,7 +120,7 @@ public class EntityAccess<T> {
         statement.executeUpdate();
     }
 
-    private void updateData(T entityData, Connection conn) throws SQLException{
+    private void updateData(T entityData) throws SQLException{
         StringBuilder updateStatement = new StringBuilder();
 
         updateStatement.append("UPDATE " + classType.getSimpleName().toUpperCase() + " SET ");
@@ -150,11 +152,16 @@ public class EntityAccess<T> {
     }
 
 
-    private String getSQLType(String type){
+    private String getSQLType(String type, Boolean hasForeignKey){
         Map<String, String> SQLtypeMap = new HashMap<>();
         SQLtypeMap.put("Long", "INTEGER");
         SQLtypeMap.put("String", "VARCHAR(255)");
-        SQLtypeMap.put("LocalDate", "DATE");
+        SQLtypeMap.put("BigDecimal", "DECIMAL");
+        SQLtypeMap.put("Double", "DOUBLE");
+
+        if(hasForeignKey){
+            return "INTEGER REFERENCES " + type.toUpperCase() + " (ID)";
+        }
 
         return SQLtypeMap.get(type);
     }
@@ -176,47 +183,53 @@ public class EntityAccess<T> {
 
     private void comparingClassToTable(
             Map<Integer, String> declaredFieldsMapping,
-            Map<Integer, String> tableFields,
-            Connection conn
+            Map<Integer, String> tableFields
     ) throws SQLException {
-        if(declaredFieldsMapping.size() == tableFields.size()){
-            for(int i = 0; i < declaredFieldsMapping.size(); i++){
-                if(!declaredFieldsMapping.get(i).equalsIgnoreCase(tableFields.get(i))){
-                    StringBuilder updateStatement = new StringBuilder();
-                    updateStatement.append("ALTER TABLE "
-                            + classType.getSimpleName().toUpperCase()
-                            + "CHANGE " + tableFields.get(i) + " " + declaredFieldsMapping.get(i));
-                    conn.prepareStatement(updateStatement.toString()).executeUpdate();
+        try {
+            if(declaredFieldsMapping.size() == tableFields.size()){
+                for(int i = 0; i < declaredFieldsMapping.size(); i++){
+                    if(!declaredFieldsMapping.get(i).equalsIgnoreCase(tableFields.get(i))){
+                        StringBuilder updateStatement = new StringBuilder();
+                        updateStatement.append("ALTER TABLE "
+                                + classType.getSimpleName().toUpperCase()
+                                + "CHANGE " + tableFields.get(i) + " " + declaredFieldsMapping.get(i));
+                        conn.prepareStatement(updateStatement.toString()).executeUpdate();
+                    }
                 }
-            }
-        }else if(declaredFieldsMapping.size() > tableFields.size()){
-            for(int i = 0; i < declaredFieldsMapping.size(); i++){
-                if(tableFields.get(i) == null){
-                    StringBuilder updateStatement = new StringBuilder();
-                    updateStatement.append("ALTER TABLE "
-                            + classType.getSimpleName().toUpperCase()
-                            + " ADD " + declaredFieldsMapping.get(i) + " "
-                            + getSQLType(Pessoa.class.getDeclaredFields()[i].getType().getSimpleName())
+            }else if(declaredFieldsMapping.size() > tableFields.size()){
+                for(int i = 0; i < declaredFieldsMapping.size(); i++){
+                    var primitive = Arrays.stream(classType.getDeclaredFields()[i].getType().getDeclaredFields()).anyMatch(classAttributeType ->
+                            primitiveClassType.stream().anyMatch(primitiveClassTypeItem -> primitiveClassTypeItem.isAssignableFrom(classAttributeType.getType()))
                     );
-                    System.out.println(updateStatement);
-                    conn.prepareStatement(updateStatement.toString()).executeUpdate();
+                    if(tableFields.get(i) == null){
+                        StringBuilder updateStatement = new StringBuilder();
+                        updateStatement.append("ALTER TABLE "
+                                + classType.getSimpleName().toUpperCase()
+                                + " ADD " + declaredFieldsMapping.get(i) + " "
+                                + getSQLType(classType.getDeclaredFields()[i].getType().getSimpleName(), !primitive)
+                        );
+                        conn.prepareStatement(updateStatement.toString()).executeUpdate();
+                    }
+                }
+            }else {
+                for(int i = 0; i < tableFields.size(); i++){
+                    if(declaredFieldsMapping.get(i) == null){
+                        StringBuilder updateStatement = new StringBuilder();
+                        updateStatement.append("ALTER TABLE "
+                                + classType.getSimpleName().toUpperCase()
+                                + " DROP COLUMN " + tableFields.get(i)
+                        );
+                        conn.prepareStatement(updateStatement.toString()).executeUpdate();
+                    }
                 }
             }
-        }else {
-            for(int i = 0; i < tableFields.size(); i++){
-                if(declaredFieldsMapping.get(i) == null){
-                    StringBuilder updateStatement = new StringBuilder();
-                    updateStatement.append("ALTER TABLE "
-                            + classType.getSimpleName().toUpperCase()
-                            + " DROP COLUMN " + tableFields.get(i)
-                    );
-                    conn.prepareStatement(updateStatement.toString()).executeUpdate();
-                }
-            }
+        } catch (SQLException e) {
+
         }
+
     }
 
-    private void readingMetadataTable(DatabaseMetaData databaseMetaData, Connection conn) throws SQLException {
+    private void readingMetadataTable(DatabaseMetaData databaseMetaData) throws SQLException {
         ResultSet rsTables = databaseMetaData.getTables(null,null, null, new String[]{"TABLE"});
 
         while (rsTables.next()) {
@@ -230,10 +243,10 @@ public class EntityAccess<T> {
                     tableFields.put(columnNumber,rsColumns.getString("COLUMN_NAME"));
                     columnNumber++;
                 }
-                for(int i = 0; i < Pessoa.class.getDeclaredFields().length; i++){
-                    declaredFieldsMapping.put(i, Pessoa.class.getDeclaredFields()[i].getName());
+                for(int i = 0; i < classType.getDeclaredFields().length; i++){
+                    declaredFieldsMapping.put(i, classType.getDeclaredFields()[i].getName());
                 }
-                comparingClassToTable(declaredFieldsMapping, tableFields, conn);
+                comparingClassToTable(declaredFieldsMapping, tableFields);
                 rsColumns.close();
             }
         }
